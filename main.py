@@ -1,73 +1,87 @@
+# Documentação usada para fazer o EP2 de Ciencia de Dados:
+# https://neo4j.com/docs/python-manual/current/
+# https://neo4j.com/docs/python-manual/current/query-simple/
+# https://neo4j.com/docs/python-manual/current/transactions/
+
+import json
 from neo4j import GraphDatabase
-import csv
-import re
-import ast
 
-uri = "neo4j+s://5379d090.databases.neo4j.io"
-username = "neo4j"
-password = "ntSSsgw8XfO1a2D5rkSd8k0Hn8WbtMtS5x2i0IxuT5Y"
+URI = "neo4j+s://7f9eb2ad.databases.neo4j.io"
+AUTH = ("neo4j", "SUsG333S9C5m7jknNP-Jp0FNazn724L02x6yR4aG8F0")
 
-driver = GraphDatabase.driver(uri, auth=(username, password))
+def criar_no_pokemon():
+    return """
+        MERGE (p:Pokemon {id: $pid})
+            SET
+                p.nome = $nome,
+                p.altura = $altura,
+                p.peso = $peso,
+                p.url = $url
+        """
 
-def process_list(field):
-    return [item.strip() for item in field.split(',') if item.strip()]
 
-def process_list_of_dicts(field):
-    try:
-        return ast.literal_eval(field)
-    except (SyntaxError, ValueError):
-        return []
-
-def insert_pokemon(tx, pokemon):
-    peso_str = pokemon['pokemon_peso']
-    peso_match = re.search(r"(\d+(\.\d+)?)", peso_str)
-    peso = float(peso_match.group(0)) if peso_match else None
-
-    tx.run("""
-        MERGE (p:Pokemon {id: $pokemon_id})
-        SET p.name = $pokemon_name,
-            p.altura = $pokemon_altura,
-            p.peso = $pokemon_peso,
-            p.url_pagina = $url_pagina
+def criar_no_tipos():
+    return """
         WITH p
-        UNWIND $pokemon_tipos AS tipo
+        UNWIND $tipos AS tipo
         MERGE (t:Tipo {name: tipo})
-        MERGE (p)-[:TEM_TIPO]->(t)
+        MERGE (p)-[:E_DO_TIPO]->(t)
+    
+    """
+
+
+def criar_no_habilidades():
+    return """
         WITH p
-        UNWIND $pokemon_habilidades AS habilidade
+        UNWIND $habilidades AS habilidade
         MERGE (h:Habilidade {name: habilidade.nome, url: habilidade.url})
-        MERGE (p)-[:TEM_HABILIDADE]->(h)
+        MERGE (p)-[:POSSUI_HABILIDADE]->(h)
+    
+    """
+
+
+def criar_no_evolucao():
+    return """
         WITH p
-        UNWIND $pokemon_proximas_evolucoes AS evolucao
+        UNWIND $evolucoes AS evolucao
         MERGE (e:Pokemon {id: evolucao.numero, name: evolucao.nome, url: evolucao.url})
-        MERGE (p)-[:EVOLUI_PARA]->(e)
-        """, 
-        pokemon_id=pokemon['pokemon_id'],
-        pokemon_name=pokemon['pokemon_name'],
-        pokemon_altura=pokemon['pokemon_altura'],
-        pokemon_peso=peso,
-        url_pagina=pokemon['url_pagina'],
-        pokemon_tipos=pokemon['pokemon_tipos'],
-        pokemon_habilidades=pokemon['pokemon_habilidades'],
-        pokemon_proximas_evolucoes=pokemon['pokemon_proximas_evolucoes']
-    )
+        MERGE (p)-[:TEM_EVOLUCAO]->(e)
+    
+    """
 
-def insert_data_to_neo4j(pokemons):
-    with driver.session() as session:
-        for pokemon in pokemons:
-            session.execute_write(insert_pokemon, pokemon)
 
-with open('data.csv', 'r', encoding='utf-8') as file:
-    reader = csv.DictReader(file)
-    pokemons = []
+def inserir_pokemon(tx, pokemon):
+    query = str(criar_no_pokemon() + 
+            criar_no_tipos() +
+            criar_no_habilidades() +
+            criar_no_evolucao())
 
-    for row in reader:
-        row['pokemon_tipos'] = process_list(row['pokemon_tipos'])
-        row['pokemon_habilidades'] = process_list_of_dicts(row['pokemon_habilidades'])
-        row['pokemon_proximas_evolucoes'] = process_list_of_dicts(row['pokemon_proximas_evolucoes'])
+    altura_formatada = pokemon['pokemon_altura'].split('Â')[0]
+    peso_formatado = pokemon['pokemon_peso'].split('Â')[0]
+    habilidades_formatada = pokemon['pokemon_habilidades'].replace("'", '"')
+    evolucoes_formatada = pokemon['pokemon_proximas_evolucoes'].replace("'", '"')
 
-        pokemons.append(row)
+    tx.run(query, 
+        pid = pokemon['pokemon_id'], 
+        nome = pokemon['pokemon_name'],
+        altura = float(altura_formatada),
+        peso = float(peso_formatado),
+        url = pokemon['url_pagina'],
+        tipos = pokemon['pokemon_tipos'],
+        habilidades = json.loads(habilidades_formatada),
+        evolucoes = json.loads(evolucoes_formatada))
+    
 
-    insert_data_to_neo4j(pokemons)
+def inserir_pokemons(session):
+    with open('pokemons.json', 'r') as file:
+        data = json.load(file)
+        for pokemon in data['pokemons']:
+            try:
+                session.execute_write(inserir_pokemon, pokemon)
+                print("Pokemon: " + str(pokemon['pokemon_id']) + " - " + str(pokemon['pokemon_name']) + ' inserido com sucesso!')
+            except:
+                print("Os dados do pokemon: " + str(pokemon['pokemon_id']) + " - " + str(pokemon['pokemon_name']) + ' estão inválidos!')
 
-driver.close()
+with GraphDatabase.driver(URI, auth=AUTH) as driver:
+    with driver.session(database="neo4j") as session:
+        inserir_pokemons(session)
